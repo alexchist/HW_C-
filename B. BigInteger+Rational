@@ -1,0 +1,668 @@
+#include <utility>
+#include <vector>
+#include <iostream>
+#include <algorithm>
+#include <complex>
+#include <cstring>
+
+class BigInteger;
+
+class Rational;
+
+BigInteger operator*(const BigInteger& a, int b);
+
+BigInteger operator*(int a, const BigInteger& b);
+
+BigInteger operator+(const BigInteger& a, const BigInteger& b);
+
+BigInteger operator-(const BigInteger& a, const BigInteger& b);
+
+class BigInteger {
+    bool is_negative = false;
+    bool need_to_del_zeros = true;
+
+    friend std::istream& operator>>(std::istream&, BigInteger&);
+
+private:
+    std::vector<int> digits = {};
+
+    BigInteger multi_to_one(BigInteger num, int digit) {
+        long long carry = 0;
+        num.is_negative = false;
+        for (size_t i = 0; i < num.size() or carry > 0; ++i) {
+            if (i == num.size()) {
+                num.digits.push_back(0);
+            }
+            carry += (long long) num.digits[i] * digit;
+            num.digits[i] = carry % BASE;
+            carry /= BASE;
+        }
+        return num;
+    }
+
+    void karatsuba(long long* left, long long* right, long long* res, size_t n) {
+        if (n <= 64) {
+            for (size_t i = 0; i < n; i++) {
+                for (size_t j = 0; j < n; j++) {
+                    res[i + j] += left[i] * right[j];
+                }
+            }
+        } else {
+            size_t k = n / 2;
+            long long mid_l[k], mid_r[k], mid_res[n];
+            for (size_t i = 0; i < k; i++) {
+                mid_l[i] = left[i] + left[k + i];
+                mid_r[i] = right[i] + right[k + i];
+            }
+            memset(mid_res, 0, n * sizeof(long long));
+            karatsuba(mid_l, mid_r, mid_res, k);
+            karatsuba(left, right, res, k);
+            karatsuba(left + k, right + k, res + n, k);
+            for (size_t i = 0; i < k; i++) {
+                long long cur_l = res[i + k] + mid_res[i] - res[i] - res[i + 2 * k];
+                long long cur_r = res[i + 2 * k] + mid_res[i + k] - res[i + k] - res[i + 3 * k];
+                res[k + i] = cur_l;
+                res[n + i] = cur_r;
+            }
+        }
+    }
+
+    BigInteger multiply(const BigInteger& first, const BigInteger& second) {
+        if (first.size() == 0 or second.size() == 0) {
+            return {0};
+        }
+        if (first.size() == 1) {
+            return multi_to_one(second, first.digits[0]);
+        }
+        if (second.size() == 1) {
+            return multi_to_one(first, second.digits[0]);
+        }
+
+        size_t n = 1;
+        while (n < std::max(first.size(), second.size())) {
+            n *= 2;
+        }
+
+        long long left[n];
+        for (size_t i = 0; i < first.size(); ++i) {
+            left[i] = first.digits[i];
+        }
+        memset(left + first.size(), 0, (n - first.size()) * sizeof(long long));
+        long long right[n];
+        for (size_t i = 0; i < second.size(); ++i) {
+            right[i] = second.digits[i];
+        }
+        memset(right + second.size(), 0, (n - second.size()) * sizeof(long long));
+        long long res[2 * n];
+        memset(res, 0, 2 * n * sizeof(long long));
+
+        karatsuba(left, right, res, n);
+
+        BigInteger ans;
+        for (size_t i = 0; i < 2 * n; ++i) {
+            if (i + 1 < 2 * n) {
+                res[i + 1] += res[i] / BASE;
+                res[i] %= BASE;
+            }
+            ans.digits.push_back(res[i]);
+        }
+        while (ans.size() > 0 and ans.digits.back() == 0) {
+            ans.digits.pop_back();
+        }
+        return ans;
+    }
+
+    std::string toString(int num, size_t it) const {
+        std::string ans;
+        for (int i = 0; i < logBASE; ++i) {
+            if (num == 0 and it == 0) break;
+            ans += num % 10 + '0';
+            num /= 10;
+        }
+        std::reverse(ans.begin(), ans.end());
+        return ans;
+    }
+
+    int get_ind(size_t ind) const {
+        return digits[ind];
+    }
+
+    void add_number(const BigInteger& other) {
+        size_t sz = other.size();
+        int carry = 0;
+        for (size_t i = 0; i < sz; ++i) {
+            carry += other.get_ind(i);
+            if (digits.size() <= i) {
+                digits.push_back(0);
+            }
+            digits[i] += carry;
+            carry = digits[i] / BASE;
+            digits[i] %= BASE;
+        }
+
+        size_t i = sz;
+        while (carry > 0) {
+            if (digits.size() <= i) {
+                digits.push_back(0);
+            }
+            digits[i] += carry;
+            carry = digits[i] / BASE;
+            digits[i] %= BASE;
+            i++;
+        }
+    }
+
+    void sub_number(const BigInteger& other) {
+        for (size_t i = 0; i < other.size(); ++i) {
+            if (digits[i] < other.get_ind(i)) {
+                digits[i + 1] -= 1;
+                digits[i] += BASE;
+            }
+            digits[i] -= other.get_ind(i);
+        }
+        size_t i = other.size();
+        while (i < digits.size() and digits[i] < 0) {
+            digits[i + 1] -= 1;
+            digits[i] += BASE;
+            ++i;
+        }
+        while (!digits.empty() and digits.back() == 0) {
+            digits.pop_back();
+        }
+    }
+
+public:
+    static const int BASE = 1000000;
+    static const int logBASE = 6;
+
+    BigInteger() : is_negative(false) {};
+
+    BigInteger(int num) {
+        if (num < 0) {
+            is_negative = true;
+            num *= -1;
+        }
+        while (num) {
+            digits.push_back(num % BASE);
+            num /= BASE;
+        }
+    };
+
+    BigInteger(const BigInteger&) = default;
+
+    BigInteger& operator=(const BigInteger&) = default;
+
+
+    size_t size() const {
+        return digits.size();
+    }
+
+    std::strong_ordering operator<=>(const BigInteger& other) const {
+        if (other.is_negative != is_negative) {
+            return other.is_negative <=> is_negative;
+        }
+        if (digits.size() != other.size()) {
+            if (!is_negative) {
+                return digits.size() <=> other.size();
+            } else {
+                return other.size() <=> digits.size();
+            }
+        }
+        int sz = digits.size();
+        for (size_t i = 0; i < digits.size(); ++i) {
+            if (digits[sz - i - 1] != other.get_ind(sz - i - 1)) {
+                if (!is_negative) {
+                    return digits[sz - i - 1] <=> other.get_ind(sz - i - 1);
+                } else {
+                    return other.get_ind(sz - i - 1) <=> digits[sz - i - 1];
+                }
+            }
+        }
+        return 0 <=> 0;
+    }
+
+    bool operator==(const BigInteger&) const = default;
+
+    BigInteger& operator-=(const BigInteger&);
+
+    BigInteger& operator+=(const BigInteger& other) {
+        if (!is_negative && other.is_negative) {
+            BigInteger cp_oth = other;
+            cp_oth.is_negative = false;
+            *this -= cp_oth;
+            return *this;
+        }
+        if (is_negative && !other.is_negative) {
+            BigInteger cp_oth = other;
+            BigInteger cp_this = *this;
+            cp_this.is_negative = false;
+            cp_oth -= cp_this;
+            *this = cp_oth;
+            return *this;
+        }
+        add_number(other);
+        return *this;
+    }
+
+    BigInteger& operator*=(const BigInteger& other) {
+        bool fl_is_negative = is_negative ^ other.is_negative;
+        *this = multiply(*this, other);
+        is_negative = fl_is_negative;
+        if (digits.empty()) {
+            is_negative = false;
+        }
+        return *this;
+    }
+
+    BigInteger& operator/=(const BigInteger& other_) {
+        BigInteger ans(0);
+        BigInteger other = other_;
+        ans.is_negative = is_negative ^ other.is_negative;
+        is_negative = false;
+        other.is_negative = false;
+        int sz_oth = other.size();
+        int sz_this = digits.size();
+        for (int i = 0; i < sz_this - sz_oth + 1; ++i) {
+            int l = 0, r = BASE;
+            while (r - l > 1) {
+                int mid = (l + r) / 2;
+                BigInteger here = other;
+                here *= BigInteger(mid);
+                reverse(here.digits.begin(), here.digits.end());
+                for (int k = 0; k < sz_this - sz_oth - i; ++k) {
+                    here.digits.push_back(0);
+                }
+                reverse(here.digits.begin(), here.digits.end());
+                while (!here.digits.empty() and here.digits.back() == 0) {
+                    here.digits.pop_back();
+                }
+                if (here <= *this) {
+                    l = mid;
+                } else {
+                    r = mid;
+                }
+            }
+
+            BigInteger here = other;
+            here *= BigInteger(l);
+            reverse(here.digits.begin(), here.digits.end());
+            for (int k = 0; k < sz_this - sz_oth - i; ++k) {
+                here.digits.push_back(0);
+            }
+            reverse(here.digits.begin(), here.digits.end());
+            while (!here.digits.empty() and here.digits.back() == 0) {
+                here.digits.pop_back();
+            }
+            if (here <= *this) {
+                *this -= here;
+                ans.digits.push_back(l);
+            }
+        }
+
+        reverse(ans.digits.begin(), ans.digits.end());
+        if (need_to_del_zeros) {
+            while (!ans.digits.empty() && ans.digits.back() == 0) {
+                ans.digits.pop_back();
+            }
+        }
+        if (ans.digits.empty()) {
+            ans.is_negative = false;
+        }
+        *this = ans;
+        return *this;
+    }
+
+    BigInteger& operator%=(const BigInteger& other_) {
+        BigInteger cp = *this;
+        cp /= other_;
+        cp *= other_;
+        *this -= cp;
+        return *this;
+    }
+
+    BigInteger operator-() {
+        if (digits.empty()) {
+            BigInteger bg = *this;
+            bg.is_negative = false;
+            return bg;
+        }
+        BigInteger cp(*this);
+        cp.is_negative ^= 1;
+        return cp;
+    }
+
+    std::string toString() const {
+        std::string ans;
+        if (is_negative) {
+            ans += '-';
+        }
+        if (digits.empty()) {
+            ans += '0';
+        }
+        for (size_t i = 0; i < digits.size(); ++i) {
+            ans += toString(digits[digits.size() - 1 - i], i);
+        }
+        return ans;
+    }
+
+    BigInteger& operator++() {
+        *this += 1;
+        return *this;
+    }
+
+    BigInteger operator++(int) {
+        const BigInteger temp = *this;
+        *this += 1;
+        return temp;
+    }
+
+    BigInteger& operator--() {
+        *this -= 1;
+        return *this;
+    }
+
+    const BigInteger operator--(int) {
+        const BigInteger temp = *this;
+        *this -= 1;
+        return temp;
+    }
+
+
+    explicit operator bool() const {
+        return !digits.empty();
+    }
+
+    void add_n_zeros(size_t n) {
+        reverse(digits.begin(), digits.end());
+        for (size_t i = 0; i < n; ++i) {
+            digits.push_back(0);
+        }
+        reverse(digits.begin(), digits.end());
+    }
+};
+
+BigInteger operator "" _bi(unsigned long long x) {
+    return BigInteger(x);
+}
+
+BigInteger operator "" _bi(const char* x, size_t n) {
+    BigInteger res;
+    for (size_t i = 0; i < n; ++i) {
+        res *= 10;
+        res += x[i] - '0';
+    }
+    return res;
+}
+
+BigInteger& BigInteger::operator-=(const BigInteger& other) {
+    if (!is_negative && !other.is_negative) {
+        if (*this < other) {
+            BigInteger cp_oth = other;
+            cp_oth -= *this;
+            *this = cp_oth;
+            is_negative = true;
+            return *this;
+        }
+        sub_number(other);
+        return *this;
+    } else if (!is_negative && other.is_negative) {
+        BigInteger cp_oth = other;
+        cp_oth.is_negative = false;
+        *this += cp_oth;
+        return *this;
+    } else if (is_negative && !other.is_negative) {
+        BigInteger cp_this = *this;
+        cp_this.is_negative = false;
+        cp_this += other;
+        cp_this.is_negative = true;
+        *this = cp_this;
+        return *this;
+    } else {
+        BigInteger cp_oth = other;
+        BigInteger cp_this = *this;
+        cp_this.is_negative = false;
+        cp_oth.is_negative = false;
+        cp_oth -= cp_this;
+        *this = cp_oth;
+        return *this;
+    }
+}
+
+BigInteger operator+(const BigInteger& a, const BigInteger& b) {
+    BigInteger cp = a;
+    cp += b;
+    return cp;
+}
+
+
+BigInteger operator-(const BigInteger& a, const BigInteger& b) {
+    BigInteger cp(a);
+    cp -= b;
+    return cp;
+}
+
+BigInteger operator*(const BigInteger& a, const BigInteger& b) {
+    BigInteger cp(a);
+    cp *= b;
+    return cp;
+}
+
+BigInteger operator/(const BigInteger& a, const BigInteger& b) {
+    BigInteger cp(a);
+    cp /= b;
+    return cp;
+}
+
+BigInteger operator%(const BigInteger& a, const BigInteger& b) {
+    BigInteger cp(a);
+    cp %= b;
+    return cp;
+}
+
+BigInteger operator*(const BigInteger& a, int b) {
+    BigInteger cp(a);
+    cp *= b;
+    return cp;
+}
+
+
+std::istream& operator>>(std::istream& in, BigInteger& bg) {
+    bg.digits.clear();
+    bg.is_negative = false;
+    char c;
+    std::vector<int> digits;
+    in.get(c);
+    while (isspace(c)) {
+        in.get(c);
+    }
+    while (!isspace(c) && !in.eof()) {
+        if (c == '-') {
+            bg.is_negative ^= 1;
+        } else if ('0' <= c and c <= '9') {
+            digits.push_back(c - '0');
+        }
+        in.get(c);
+    }
+    std::reverse(digits.begin(), digits.end());
+    for (size_t i = 0; i < digits.size(); i += bg.logBASE) {
+        int num = 0;
+        for (int j = bg.logBASE - 1; j >= 0; --j) {
+            if (i + j >= (size_t) digits.size()) continue;
+            num *= 10;
+            num += digits[i + j];
+        }
+        bg.digits.push_back(num);
+    }
+    while (bg.size() > 0 and bg.digits.back() == 0) {
+        bg.digits.pop_back();
+    }
+    if (bg.digits.empty()) {
+        bg.is_negative = false;
+    }
+    return in;
+}
+
+std::ostream& operator<<(std::ostream& out, const BigInteger& bg) {
+    out << bg.toString();
+    return out;
+}
+
+class Rational {
+private:
+    BigInteger num = 0, den = 1;
+
+    BigInteger gcd(BigInteger a, BigInteger b) {
+        if (a < 0) a *= -1;
+        while (b) {
+            a %= b;
+            std::swap(a, b);
+        }
+        return a;
+    }
+
+    void relax() {
+        BigInteger num2 = gcd(num, den);
+        num /= num2;
+        den /= num2;
+    }
+
+public:
+    Rational() {};
+
+    Rational(int num) : num(num) {};
+
+    Rational(const BigInteger& num) : num(num) {}
+
+    Rational& operator+=(const Rational& other) {
+        num = num * other.den + other.num * den;
+        den *= other.den;
+        relax();
+        return *this;
+    }
+
+    Rational& operator-=(const Rational& other) {
+        num = num * other.den - other.num * den;
+        den *= other.den;
+        relax();
+        return *this;
+    }
+
+    Rational& operator*=(const Rational& other) {
+        num *= other.num;
+        den *= other.den;
+        relax();
+        return *this;
+    }
+
+    Rational& operator/=(const Rational& other) {
+        num *= other.den;
+        den *= other.num;
+        if (den < 0) {
+            num *= -1;
+            den *= -1;
+        }
+        relax();
+        return *this;
+    }
+
+    Rational operator-() {
+        Rational cp(*this);
+        cp.num *= -1;
+        return cp;
+    }
+
+    bool operator==(const Rational& other) const {
+        return num * other.den == den * other.num;
+    }
+
+    auto operator<=>(const Rational& other) const {
+        return num * other.den - den * other.num <=> 0;
+    }
+
+    auto operator<=>(const int other) const {
+        return num - den * other <=> 0;
+    }
+
+    std::string toString() {
+        std::string ans;
+        ans += num.toString();
+        if (den != 1) {
+            ans += '/';
+            ans += den.toString();
+        }
+        return ans;
+    }
+
+
+    std::string asDecimal(size_t precision = 0) const {
+        Rational cp = *this;
+        cp.num.add_n_zeros(precision);
+        BigInteger cp2 = cp.num / den;
+        std::string ans = cp2.toString();
+        for (size_t i = 0; i < precision * (num.logBASE - 1); ++i) {
+            ans.pop_back();
+        }
+        bool have_is_negative = false;
+        if (ans[0] == '-') {
+            have_is_negative = true;
+            ans.erase(ans.begin());
+        }
+        if (num < den) {
+            while (ans.size() < precision + 1) {
+                ans.insert(ans.begin(), '0');
+            }
+        }
+        if (have_is_negative) {
+            ans.insert(ans.begin(), '-');
+        }
+        if (precision > 0) {
+            ans.insert(ans.end() - precision, '.');
+        }
+        return ans;
+    }
+
+    explicit operator double() const {
+        std::string here = asDecimal(20);
+        double res = 0;
+        bool fl = true;
+        double flt = 0.1;
+        for (char i : here) {
+            if (i == '.') {
+                fl = false;
+                continue;
+            }
+            if (fl) {
+                res *= 10;
+                res += i - '0';
+            } else {
+                res += (i - '0') * flt;
+                flt /= 10;
+            }
+        }
+        return res;
+    }
+};
+
+Rational operator+(const Rational& a, const Rational& b) {
+    Rational cp = a;
+    cp += b;
+    return cp;
+}
+
+Rational operator-(const Rational& a, const Rational& b) {
+    Rational cp = a;
+    cp -= b;
+    return cp;
+}
+
+Rational operator*(const Rational& a, const Rational& b) {
+    Rational cp = a;
+    cp *= b;
+    return cp;
+}
+
+Rational operator/(const Rational& a, const Rational& b) {
+    Rational cp = a;
+    cp /= b;
+    return cp;
+}
