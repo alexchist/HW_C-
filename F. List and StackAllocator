@@ -1,0 +1,337 @@
+#include <chrono>
+#include <stdexcept>
+#include <string>
+#include <list>
+#include <vector>
+#include <deque>
+#include <memory>
+#include <iostream>
+#include <fstream>
+#include <algorithm>
+#include <type_traits>
+#include <sstream>
+#include <cassert>
+#include <sys/resource.h>
+
+#include <chrono>
+#include <stdexcept>
+#include <string>
+#include <list>
+#include <vector>
+#include <deque>
+#include <array>
+#include <memory>
+#include <iostream>
+#include <fstream>
+#include <algorithm>
+#include <type_traits>
+
+template<size_t N>
+class StackStorage {
+    char data[N];
+public:
+    void* begin;
+
+    StackStorage() : data(), begin(data) {}
+
+    StackStorage(const StackStorage&) = delete;
+};
+
+
+template<typename T, size_t N>
+class StackAllocator {
+    StackStorage<N>* memory;
+
+    template<typename U, size_t M> friend
+    class StackAllocator;
+
+    std::size_t sz = N;
+
+public:
+    using value_type = T;
+
+    StackAllocator(StackStorage<N>& st) : memory(&st) {}
+
+//    StackAllocator() = default;
+
+    ~StackAllocator() = default;
+
+    template<typename U>
+    StackAllocator(const StackAllocator<U, N>& st) : memory(st.memory) {}
+
+    StackAllocator& operator=(const StackAllocator<T, N>& oth) = default;
+
+    T* allocate(size_t count) {
+        void* start = memory->begin;
+        start = std::align(alignof(T), sizeof(T) * count, start, sz);
+        memory->begin = reinterpret_cast<char*>(start);
+        T* res = reinterpret_cast<T*> (memory->begin);
+        memory->begin = (char*) memory->begin + sizeof(T) * count;
+        return res;
+    }
+
+    void deallocate(T*, size_t) {}
+
+    template<typename U>
+    struct rebind {
+        using other = StackAllocator<U, N>;
+    };
+};
+
+
+template<typename T, typename Alloc_T = std::allocator<T>>
+class List {
+    struct BaseNode {
+        BaseNode* prev = this, * next = this;
+    };
+
+    struct Node : BaseNode {
+        T value;
+
+        Node(const T& tt) : BaseNode(), value(tt) {}
+
+        Node(const BaseNode& bt, const T& tt) : BaseNode(bt), value(tt) {}
+
+        Node(const BaseNode& bt) : BaseNode(bt), value() {}
+    };
+
+
+    template<bool isConst>
+    class basic_iterator {
+    public:
+        using iterator_category = std::bidirectional_iterator_tag;
+        using pointer_type = std::conditional_t<isConst, const Node*, Node*>;
+        using reference_type = std::conditional_t<isConst, const T&, T&>;
+        using value_type = T;
+        using iterator_type = std::conditional_t<isConst, const BaseNode*, BaseNode*>;
+        using difference_type = int;
+        iterator_type it;
+
+        basic_iterator(const iterator_type it) : it(it) {}
+
+        basic_iterator(const basic_iterator<false>& it) : it(it.it) {}
+
+        ~basic_iterator() = default;
+
+        basic_iterator& operator=(const basic_iterator& oth) = default;
+
+        reference_type operator*() const {
+            return static_cast<Node*>(const_cast<BaseNode*>(it))->value;
+        }
+
+        pointer_type operator->() const {
+            return static_cast<Node*>(const_cast<BaseNode*>(it));
+        }
+
+        basic_iterator& operator++() {
+            it = it->next;
+            return *this;
+        };
+
+        basic_iterator operator++(int) {
+            basic_iterator copy = *this;
+            it = it->next;
+            return copy;
+        };
+
+        basic_iterator<isConst>& operator--() {
+            it = it->prev;
+            return *this;
+        };
+
+        basic_iterator<isConst> operator--(int) {
+            basic_iterator<isConst> copy = *this;
+            it = it->prev;
+            return copy;
+        };
+
+        bool operator==(const basic_iterator<isConst>& oth) const {
+            return it == oth.it;
+        }
+
+        bool operator!=(const basic_iterator<isConst>& oth) const {
+            return it != oth.it;
+        }
+
+        BaseNode* get_next() {
+            return it->next;
+        }
+
+        BaseNode* get_prev() {
+            return it->prev;
+        }
+
+        Node* get_node() {
+            return static_cast<Node*>(const_cast<BaseNode*>(it));
+        }
+    };
+
+    void insert_empty() {
+        Node* newNode = std::allocator_traits<Alloc_Node>::allocate(alloc_node, 1);
+        std::allocator_traits<Alloc_Node>::construct(alloc_node, newNode,
+                                                     BaseNode(end().get_prev(), end().get_node()));
+        newNode->next->prev = newNode;
+        newNode->prev->next = newNode;
+        sz++;
+    }
+
+    BaseNode fakeNode;
+    size_t sz;
+    using Alloc_Node = typename std::allocator_traits<Alloc_T>::template rebind_alloc<Node>;
+    Alloc_Node alloc_node;
+public:
+    using iterator = basic_iterator<false>;
+    using const_iterator = basic_iterator<true>;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+    iterator begin() {
+        return iterator(reinterpret_cast<Node*>(fakeNode.next));
+    }
+
+    iterator end() {
+        return iterator(reinterpret_cast<Node*>(&fakeNode));
+    }
+
+    const_iterator cbegin() const {
+        return const_iterator(reinterpret_cast<const Node*> (fakeNode.next));
+    }
+
+    const_iterator cend() const {
+        return const_iterator(reinterpret_cast<const Node*>(&fakeNode));
+    }
+
+    const_iterator begin() const {
+        return cbegin();
+    }
+
+    const_iterator end() const {
+        return cend();
+    }
+
+    reverse_iterator rbegin() {
+        return reverse_iterator(end());
+    }
+
+    reverse_iterator rend() {
+        return reverse_iterator(begin());
+    }
+
+    const_reverse_iterator rbegin() const {
+        return const_reverse_iterator(cend());
+    }
+
+    const_reverse_iterator rend() const {
+        return const_reverse_iterator(cbegin());
+    }
+
+    List() : fakeNode(), sz(0) {}
+
+    List(Alloc_T alloc) : fakeNode(), sz(0), alloc_node(alloc) {}
+
+    List(int n) : List() {
+        for (int i = 0; i < n; ++i) {
+            insert_empty();
+        }
+    }
+
+    List(int n, Alloc_T alloc) : List(alloc) {
+        for (int i = 0; i < n; ++i) {
+            insert_empty();
+        }
+    }
+
+    void clear() {
+        while (sz > 0) {
+            pop_front();
+        }
+    }
+
+    List(List<T, Alloc_T>& ls)
+            : List(std::allocator_traits<Alloc_Node>::select_on_container_copy_construction(ls.alloc_node)) {
+        for (auto& it_oth: ls) {
+            push_back(it_oth);
+        }
+    }
+
+    List(const List<T, Alloc_T>& ls, Alloc_Node alloc) : List(alloc) {
+        for (auto& it_oth: ls) {
+            push_back(it_oth);
+        }
+    }
+
+    void swap(List& ls) {
+        std::swap(sz, ls.sz);
+        std::swap(fakeNode, ls.fakeNode);
+        std::swap(alloc_node, ls.alloc_node);
+    }
+
+    List& operator=(const List& arg) {
+        if (this == &arg) {
+            return *this;
+        }
+        List copy(arg, std::allocator_traits<Alloc_Node>::propagate_on_container_copy_assignment::value ? arg.alloc_node
+                                                                                                        : alloc_node);
+        std::swap(fakeNode, copy.fakeNode);
+        fakeNode.next->prev = &fakeNode;
+        fakeNode.prev->next = &fakeNode;
+        copy.fakeNode.prev->next = &copy.fakeNode;
+        copy.fakeNode.next->prev = &copy.fakeNode;
+        std::swap(alloc_node, copy.alloc_node);
+        std::swap(sz, copy.sz);
+        return *this;
+    }
+
+
+    ~List() {
+        clear();
+    }
+
+    size_t size() const {
+        return sz;
+    }
+
+
+    void insert(const_iterator it, const T& el = T()) {
+        Node* newNode;
+        newNode = std::allocator_traits<Alloc_Node>::allocate(alloc_node, 1);
+        try {
+            std::allocator_traits<Alloc_Node>::construct(alloc_node, newNode, BaseNode(it.get_prev(), it.get_node()),
+                                                         el);
+        } catch (...) {
+            std::allocator_traits<Alloc_Node>::deallocate(alloc_node, newNode, 1);
+            throw;
+        }
+        newNode->next->prev = newNode;
+        newNode->prev->next = newNode;
+        sz++;
+    }
+
+    void push_back(const T& el) {
+        insert(end(), el);
+    }
+
+    void push_front(const T& el) {
+        insert(begin(), el);
+    }
+
+    void erase(const_iterator it) {
+        it.get_prev()->next = it.get_next();
+        it.get_next()->prev = it.get_prev();
+        std::allocator_traits<Alloc_Node>::destroy(alloc_node, it.get_node());
+        std::allocator_traits<Alloc_Node>::deallocate(alloc_node, it.get_node(), 1);
+        sz--;
+    }
+
+    void pop_front() {
+        erase(begin());
+    }
+
+    void pop_back() {
+        erase(--end());
+    }
+
+    Alloc_T get_allocator() {
+        return Alloc_T(alloc_node);
+    }
+};
