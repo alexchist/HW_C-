@@ -1,0 +1,430 @@
+#include <type_traits>
+#include <unordered_set>
+#include <algorithm>
+#include <numeric>
+#include <random>
+#include <iostream>
+#include <cassert>
+#include <deque>
+
+template<typename T>
+class Deque {
+public:
+    const static int BLOCK_SIZE = 32;
+
+    friend class Index;
+
+    struct Index {
+        int row, column;
+
+        Index operator+=(int n) {
+            column += n;
+            int dx = column / BLOCK_SIZE;
+            column %= BLOCK_SIZE;
+            row += dx;
+            return *this;
+        }
+
+        Index operator-=(int n) {
+            column -= n;
+            int dx = abs(column / BLOCK_SIZE);
+            column %= BLOCK_SIZE;
+            if (column < 0) {
+                row--;
+                column += BLOCK_SIZE;
+            }
+            row -= dx;
+            return *this;
+        }
+
+        Index operator-=(Index oth) {
+            row -= oth.row;
+            column -= oth.column;
+            if (column < 0) {
+                row--;
+                column += BLOCK_SIZE;
+            }
+            return *this;
+        }
+
+        void operator--() {
+            if (column == 0) {
+                row--;
+                column = BLOCK_SIZE - 1;
+            } else {
+                column--;
+            }
+        }
+
+        Index operator+(int oth) const {
+            Index index_ = *this;
+            index_ += oth;
+            return index_;
+        }
+
+        Index operator-(const Index& oth) const {
+            Index index_ = *this;
+            index_ -= oth;
+            return index_;
+        }
+
+        Index operator-(int oth) const {
+            Index index_ = *this;
+            index_ -= oth;
+            return index_;
+        }
+
+        auto operator<=>(const Index&) const = default;
+    };
+
+    Index start = {0, 0};
+    int sz = 0;
+    std::vector<T*> inds;
+
+    void init_ind(size_t ind) {
+        inds[ind] = reinterpret_cast<T*>(new char[BLOCK_SIZE * sizeof(T)]);
+    }
+
+    void reserve() {
+        size_t now_sz = inds.size();
+        inds.resize(now_sz * 3);
+        for (size_t i = now_sz; i < 2 * now_sz; ++i) {
+            inds[i] = inds[i - now_sz];
+        }
+        for (size_t i = 0; i < now_sz; ++i) {
+            init_ind(i);
+        }
+        for (size_t i = now_sz * 2; i < 3 * now_sz; ++i) {
+            init_ind(i);
+        }
+        start.row += now_sz;
+    }
+
+    void rollback_reserve() {
+        for (size_t i = 0; i < inds.size() / 3; ++i) {
+            delete[] reinterpret_cast<char*> (inds[i]);
+            inds[i] = inds[i + inds.size() / 3];
+        }
+        for (size_t i = 2 * inds.size() / 3; i < inds.size(); ++i) {
+            delete[] reinterpret_cast<char*> (inds[i]);
+        }
+        start.row -= inds.size() / 3;
+        inds.resize(inds.size() / 3);
+    }
+
+    void delete_all() {
+        for (int i = 0; i < sz; ++i) {
+            Index now = start + i;
+            inds[now.row][now.column].~T();
+        }
+        for (size_t i = 0; i < inds.size(); ++i) {
+            delete[] reinterpret_cast<char*> (inds[i]);
+        }
+        inds.shrink_to_fit();
+        sz = 0;
+        start = {0, 1};
+    }
+
+    friend class basic_iterator;
+
+    template<bool isConst>
+    class basic_iterator {
+    public:
+        Index ind;
+        using iterator_category = std::random_access_iterator_tag;
+        using pointer_type = std::conditional_t<isConst, const T*, T*>;
+        using reference_type = std::conditional_t<isConst, const T&, T&>;
+        using value_type = T;
+        using iterator_type = std::conditional_t<isConst, typename std::vector<T*>::const_iterator, typename std::vector<T*>::iterator>;
+    private:
+        iterator_type it;
+    public:
+
+        basic_iterator(const Index& ind, const iterator_type it) : ind(ind), it(it) {}
+
+        basic_iterator(const basic_iterator<false>& it) : ind(it.ind), it(it.it) {}
+
+        ~basic_iterator() = default;
+
+        basic_iterator& operator=(const basic_iterator& oth) = default;
+
+        reference_type operator*() const {
+            return (*(it + ind.row))[ind.column];
+        }
+
+        pointer_type operator->() const {
+            return *(it + ind.row) + ind.column;
+        }
+
+        basic_iterator& operator++() {
+            ind += 1;
+            return *this;
+        };
+
+        basic_iterator operator++(int) {
+            basic_iterator copy = *this;
+            ind += 1;
+            return copy;
+        };
+
+        basic_iterator& operator+=(int n) {
+            ind += n;
+            return *this;
+        };
+
+        basic_iterator<isConst>& operator--() {
+            --ind;
+            return *this;
+        };
+
+        basic_iterator<isConst> operator--(int) {
+            basic_iterator<isConst> copy = *this;
+            --ind;
+            return copy;
+        };
+
+        basic_iterator& operator-=(int n) {
+            ind -= n;
+            return *this;
+        };
+
+        basic_iterator<isConst> operator+(int n) const {
+            basic_iterator<isConst> index_ = *this;
+            index_ += n;
+            return index_;
+        }
+
+        basic_iterator<isConst> operator-(int n) const {
+            basic_iterator<isConst> index_ = *this;
+            index_ -= n;
+            return index_;
+        }
+
+        long long operator-(const basic_iterator<isConst>& oth) const {
+            Index index_ = ind;
+            index_ -= oth.ind;
+            return index_.row * BLOCK_SIZE + index_.column;
+        }
+
+        auto operator<=>(const basic_iterator<isConst>& oth) const {
+            return ind <=> oth.ind;
+        }
+
+        bool operator==(const basic_iterator<isConst>& oth) const {
+            return ind == oth.ind;
+        }
+    };
+
+public:
+    using iterator = basic_iterator<false>;
+    using const_iterator = basic_iterator<true>;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+    iterator begin() {
+        return iterator(start, inds.begin());
+    }
+
+    iterator end() {
+        return iterator(start + sz, inds.begin());
+    }
+
+    const_iterator cbegin() const {
+        return const_iterator(start, inds.cbegin());
+    }
+
+    const_iterator cend() const {
+        return const_iterator(start + sz, inds.cbegin());
+    }
+
+    const_iterator begin() const {
+        return cbegin();
+    }
+
+    const_iterator end() const {
+        return cend();
+    }
+
+    reverse_iterator rbegin() {
+        return reverse_iterator(end());
+    }
+
+    reverse_iterator rend() {
+        return reverse_iterator(begin());
+    }
+
+    const_reverse_iterator rbegin() const {
+        return const_reverse_iterator(cend());
+    }
+
+    const_reverse_iterator rend() const {
+        return const_reverse_iterator(cbegin());
+    }
+
+    Deque() : start({0, 1}), sz(0), inds(std::vector<T*>(1)) {
+        init_ind(0);
+    }
+
+    Deque(int n, const T& el = T()) : start({0, 1}), sz(0) {
+        try {
+            inds.resize((n + 1) / Deque::BLOCK_SIZE + 1);
+            for (int i = 0; i < (n + 1) / Deque::BLOCK_SIZE + 1; ++i) {
+                init_ind(i);
+            }
+            for (int i = 0; i < (n + 1) / Deque::BLOCK_SIZE + 1; ++i) {
+                if (i == n / Deque::BLOCK_SIZE) {
+                    n -= n / Deque::BLOCK_SIZE * Deque::BLOCK_SIZE;
+                }
+                for (int j = 0; j < std::min(Deque::BLOCK_SIZE, n); ++j) {
+                    Index now = start + i * BLOCK_SIZE + j;
+                    new(inds[now.row] + now.column) T(el);
+                    ++sz;
+                }
+            }
+        } catch (...) {
+            delete_all();
+            throw;
+        }
+    }
+
+    Deque& operator=(const Deque<T>& deque) {
+        if (&deque == this) return *this;
+        std::vector<T*> inds2(deque.inds.size());
+        int num_copies = 0;
+        try {
+            for (size_t i = 0; i < inds2.size(); ++i) {
+                inds2[i] = reinterpret_cast<T*> (new char* [BLOCK_SIZE * sizeof(T)]);
+            }
+            for (int i = 0; i < deque.sz; ++i) {
+                Index now = deque.start + i;
+                new(inds2[now.row] + now.column) T(deque.inds[now.row][now.column]);
+                num_copies++;
+            }
+            delete_all();
+            start = deque.start;
+            sz = deque.sz;
+            inds = inds2;
+        } catch (...) {
+            for (int i = 0; i < num_copies; ++i) {
+                Index now = deque.start + i;
+                inds2[now.row][now.column].~T();
+            }
+            for (size_t i = 0; i < inds2.size(); ++i) {
+                delete[] reinterpret_cast<char*> (inds2[i]);
+            }
+            throw;
+        }
+        return *this;
+    }
+
+    Deque(const Deque<T>& deque) {
+        *this = deque;
+    }
+
+    ~Deque() {
+        delete_all();
+    }
+
+    T& operator[](size_t ind) {
+        Index now = start + (size_t) ind;
+        return inds[now.row][now.column];
+    }
+
+    T& at(size_t ind) {
+        if (ind >= (size_t) sz) {
+            throw std::out_of_range("At");
+        }
+        Index now = start + (int) ind;
+        return inds[now.row][now.column];
+    }
+
+    const T& operator[](size_t ind) const {
+        Index now = start + (int) ind;
+        return inds[now.row][now.column];
+    }
+
+    const T& at(size_t ind) const {
+        if (ind >= (size_t) sz) {
+            throw std::out_of_range("At");
+        }
+        Index now = start + (int) ind;
+        return inds[now.row][now.column];
+    }
+
+    size_t size() const {
+        return sz;
+    }
+
+    void pop_back() {
+        sz -= 1;
+        Index now = start + sz;
+        inds[now.row][now.column].~T();
+    }
+
+    void pop_front() {
+        sz -= 1;
+        Index now = start + sz;
+        inds[now.row][now.column].~T();
+        start += 1;
+    }
+
+    void push_back(const T& el) {
+        Index here = start + sz;
+        try {
+            new(inds[here.row] + here.column) T(el);
+            ++sz;
+            here = start + sz;
+            if (here.column == BLOCK_SIZE - 1 and here.row == static_cast<int>(inds.size() - 1)) {
+                reserve();
+            }
+        } catch (...) {
+            throw;
+        }
+    }
+
+    void push_front(const T& el) {
+        --start;
+        try {
+            new(inds[start.row] + start.column) T(el);
+            ++sz;
+            if (start.row == 0 and start.column == 0) {
+                reserve();
+            }
+        } catch (...) {
+            throw;
+        }
+    }
+
+    void insert(iterator it, const T& el) {
+        Index last = start + sz;
+        Index ls = last - 1;
+        if (last > it.ind) {
+            new(inds[last.row] + last.column) T(inds[ls.row][ls.column]);
+            last -= 1;
+        }
+        while (last > it.ind) {
+            ls = last - 1;
+            inds[last.row][last.column] = inds[ls.row][ls.column];
+            last -= 1;
+        }
+        inds[last.row][last.column] = el;
+        last = start + sz;
+        if (last.row + 1 == static_cast<int>(inds.size()) and last.column == BLOCK_SIZE - 1) {
+            reserve();
+        }
+        sz++;
+    }
+
+    void erase(iterator it) {
+        int cnt = end() - it;
+        for (int i = 0; i < cnt - 1; ++i) {
+            iterator nxt = it + 1;
+            inds[it.ind.row][it.ind.column] = inds[nxt.ind.row][nxt.ind.column];
+            it++;
+        }
+        sz--;
+    }
+};
+
+template<typename T>
+const int Deque<T>::BLOCK_SIZE;
