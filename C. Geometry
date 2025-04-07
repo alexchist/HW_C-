@@ -1,0 +1,663 @@
+#include <vector>
+#include <iostream>
+#include <cmath>
+#include <algorithm>
+
+const double PI = acos(-1);
+
+
+bool less_than_eps(double x) {
+    const double eps = 1e-3;
+    return std::abs(x) < eps;
+}
+
+struct Point {
+    double x, y;
+
+    Point(double x, double y) : x(x), y(y) {}
+
+    Point(Point a, Point b) : x(b.x - a.x), y(b.y - a.y) {} // чтобы использовать как вектор
+
+    bool operator==(const Point other) const {
+        return less_than_eps(x - other.x) && less_than_eps(y - other.y);
+    }
+
+    bool operator!=(const Point other) const {
+        return !(*this == other);
+    }
+
+    void operator*=(double k) {
+        x *= k;
+        y *= k;
+    }
+
+    void operator/=(double k) {
+        x /= k;
+        y /= k;
+    }
+};
+
+Point operator+(Point a, Point b) {
+    return {a.x + b.x, a.y + b.y};
+}
+
+double dist(Point a, Point b = {0, 0}) {
+    return sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+}
+
+Point rotate(Point a, double ang) {
+    return {a.x * cos(ang) - a.y * sin(ang), a.x * sin(ang) + a.y * cos(ang)};
+}
+
+Point rotate_one_point(Point c, const Point& point, double ang) {
+    Point PC = {point, c};
+    PC = rotate(PC, ang / 180 * PI);
+    return point + PC;
+}
+
+Point reflect_one_point(Point C, const Point& P) {
+    Point CP = {C, P};
+    CP *= 2;
+    return C + CP;
+}
+
+class Line {
+public:
+    double a, b, c;
+
+    Line(Point p1, Point p2) {
+        Point vec(p1, p2);
+        a = vec.y;
+        b = -vec.x;
+        c = -(a * p1.x + b * p1.y);
+    }
+
+    Line(double k, double b) : a(k), b(-1), c(b) {}
+
+    Line(Point p, double k) : Line(p, Point(p.x + 1, p.y + k)) {}
+
+    double dist(const Point p) const {
+        return std::abs(a * p.x + b * p.y + c) / sqrt(a * a + b * b);
+    }
+
+    bool operator==(Line other) {
+        if (!less_than_eps(a * other.b - b * other.a)) return false;
+        if (b == 0) {
+            return less_than_eps(c * other.a - other.c * a);
+        }
+        return less_than_eps(c * other.b - other.c * b);
+    }
+};
+
+Point reflect_one_point(Point C, const Line& line) {
+    Point normal = {line.a, line.b};
+    double distance = line.dist(C);
+    double len = dist(normal);
+    normal /= len;
+    normal *= distance;
+
+    Point CP = C;
+    C = C + normal;
+
+    if (std::abs(line.a * C.x + line.b * C.y + line.c) > 0) {
+        normal *= -1;
+    }
+    normal *= 2;
+    Point new_point = CP + normal;
+    return new_point;
+}
+
+
+Point intersect_lines(Line a, Line b) {
+    return {(a.b * b.c - b.b * a.c) / (a.a * b.b - b.a * a.b), -(a.a * b.c - b.a * a.c) / (a.a * b.b - b.a * a.b)};
+}
+
+double cross_product(Point a, Point b) {
+    return a.x * b.y - a.y * b.x;
+}
+
+double dot_product(Point a, Point b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+class Shape {
+public:
+    virtual ~Shape() = default;
+
+    virtual double perimeter() const = 0;
+
+    virtual double area() const = 0;
+
+    virtual bool operator==(const Shape& another) const = 0;
+
+    virtual bool operator!=(const Shape& another) const = 0;
+
+    virtual bool isCongruentTo(const Shape& another) const = 0;
+
+    virtual bool isSimilarTo(const Shape& another) const = 0;
+
+    virtual bool containsPoint(const Point& point) const = 0;
+
+    virtual void rotate(const Point& center, double angle) = 0;
+
+    virtual void reflect(const Point& center) = 0;
+
+    virtual void reflect(const Line& axis) = 0;
+
+    virtual void scale(const Point& center, double coefficient) = 0;
+};
+
+class Polygon : public Shape {
+protected:
+    std::vector<Point> points;
+private:
+    void add_points() {}
+
+    template<typename... Args>
+    void add_points(const Point& p, const Args &... pnts) {
+        points.push_back(p);
+        add_points(pnts...);
+    }
+public:
+
+
+    ~Polygon() = default;
+
+    Polygon(const std::vector<Point>& points) : points(points) {}
+
+    template<typename... Args>
+    Polygon(const Args &... pnts) {
+        add_points(pnts...);
+    }
+
+
+    size_t verticesCount() const {
+        return points.size();
+    }
+
+    const std::vector<Point> getVertices() const {
+        return points;
+    }
+
+    bool isConvex() {
+        size_t n = points.size();
+        bool fl1 = false, fl2 = false;
+        for (size_t i = 0; i <= n; ++i) {
+            Point p1p2 = {points[i % n], points[(i + 1) % n]}, p2p3 = {points[(i + 1) % n], points[(i + 2) % n]};
+            if (cross_product(p1p2, p2p3) > 0) fl1 = true;
+            else if (cross_product(p1p2, p2p3) < 0) fl2 = true;
+        }
+        return !fl1 or !fl2;
+    }
+
+    double perimeter() const override {
+        double ans = 0;
+        for (size_t i = 0; i < points.size(); ++i) {
+            ans += dist(points[i], points[(i + 1) % points.size()]);
+        }
+        return ans;
+    }
+
+    double area() const override {
+        double ans = 0;
+        for (size_t i = 0; i < points.size(); ++i) {
+            ans += cross_product(points[i], points[(i + 1) % points.size()]);
+        }
+        return std::abs(ans) / 2;
+    }
+
+    bool operator==(const Shape& other) const override;
+
+    bool operator!=(const Shape& other) const override {
+        return !(*this == other);
+    }
+
+    bool isCongruentTo(const Shape& other) const override {
+        Shape& oth = const_cast<Shape&>(other);
+        if (dynamic_cast<Polygon*>(&oth) != nullptr) {
+            Polygon* polygon = dynamic_cast<Polygon*>(&oth);
+            if (polygon->points.size() != points.size()) return false;
+            std::vector<double> my_scalar, oth_scalar;
+            for (size_t i = 0; i < points.size(); ++i) {
+                my_scalar.push_back(dist(Point(points[(i + 1) % points.size()], points[i])));
+                oth_scalar.push_back(dist(Point(polygon->points[(i + 1) % points.size()], polygon->points[i])));
+                my_scalar.push_back(std::abs(cross_product(Point(points[(i + 1) % points.size()], points[i]),
+                                                      Point(points[(i + 2) % points.size()],
+                                                            points[(i + 1) % points.size()]))));
+                oth_scalar.push_back(std::abs(cross_product(Point(polygon->points[(i + 1) % points.size()], polygon->points[i]),
+                                                      Point(polygon->points[(i + 2) % points.size()],
+                                                            polygon->points[(i + 1) % points.size()]))));
+            }
+            for (size_t i = 0; i < my_scalar.size(); ++i) {
+                bool fl = true;
+                for (size_t j = 0; j < my_scalar.size(); ++j) {
+                    if (my_scalar[j] == oth_scalar[j]) {
+                        fl = false;
+                        break;
+                    }
+                }
+                if (fl) return true;
+                std::rotate(my_scalar.begin(), my_scalar.begin() + 1, my_scalar.end());
+            }
+            std::reverse(my_scalar.begin(), my_scalar.end());
+            for (size_t i = 0; i < my_scalar.size(); ++i) {
+                bool fl = true;
+                for (size_t j = 0; j < my_scalar.size(); ++j) {
+                    if (my_scalar[j] == oth_scalar[j]) {
+                        fl = false;
+                        break;
+                    }
+                }
+                if (fl) return true;
+                std::rotate(my_scalar.begin(), my_scalar.begin() + 1, my_scalar.end());
+            }
+            return false;
+        }
+        return false;
+    }
+
+    bool isSimilarTo(const Shape& other) const override {
+        Shape& oth = const_cast<Shape&>(other);
+        if (dynamic_cast<Polygon*>(&oth) != nullptr) {
+            Polygon* polygon = dynamic_cast<Polygon*>(&oth);
+            for (size_t i = 0; i < points.size(); ++i) {
+                for (size_t j = 0; j < polygon->points.size(); ++j) {
+                    double newcoeff = dist(points[i], points[(i + 1) % points.size()]) /
+                                      dist(polygon->points[j], polygon->points[(j + 1) % polygon->points.size()]);
+                    std::vector<Point> new_points = {polygon->points[0]};
+
+                    for (size_t k = 1; k < polygon->points.size(); ++k) {
+                        Point vec = {polygon->points[k - 1], polygon->points[k]};
+                        double del = newcoeff;
+                        vec *= del;
+                        new_points.push_back(new_points.back() + vec);
+                    }
+                    Polygon newpol = Polygon(new_points);
+                    if (isCongruentTo(newpol)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    bool containsPoint(const Point& P) const override {
+        double ans = 0;
+        for (size_t i = 0; i < points.size(); ++i) {
+            Point PA = {P, points[i]}, PB = {P, points[(i + 1) % points.size()]};
+            ans += atan2(cross_product(PA, PB), dot_product(PA, PB));
+            Line line = {points[i], points[(i + 1) % points.size()]};
+            if (std::abs(points[i].x - P.x) + std::abs(points[i].y - P.y) == 0 or
+                (std::abs(line.a * P.x + line.b * P.y + line.c) == 0)) {
+                return true;
+            }
+        }
+        return std::abs(ans) > PI;
+    }
+
+    void rotate(const Point& point, double ang) override {
+        std::vector<Point> new_points;
+        for (auto c : points) {
+            new_points.push_back(rotate_one_point(c, point, ang));
+        }
+        points = new_points;
+    }
+
+    void reflect(const Point& P) override {
+        std::vector<Point> new_points;
+        for (auto c : points) {
+            new_points.push_back(reflect_one_point(c, P));
+        }
+        points = new_points;
+    }
+
+    void reflect(const Line& line) override {
+        std::vector<Point> new_points;
+        for (auto c : points) {
+            new_points.push_back(reflect_one_point(c, line));
+        }
+        points = new_points;
+        std::reverse(points.begin(), points.end());
+    }
+
+    void scale(const Point& center, double coeff) override {
+        std::vector<Point> new_points;
+        for (auto c : points) {
+            Point CA = {center, c};
+            CA *= coeff;
+            new_points.push_back(center + CA);
+        }
+        points = new_points;
+    }
+};
+
+class Ellipse : public Shape {
+public:
+    Point foc1, foc2;
+    double distance;
+    double a, b;
+
+    ~Ellipse() = default;
+
+    Ellipse(Point foc1, Point foc2, double distance) : foc1(foc1), foc2(foc2), distance(distance), a(distance / 2),
+                                                       b(sqrt((distance / 2) * (distance / 2) -
+                                                              (dist(foc1, foc2) / 2) * (dist(foc1, foc2) / 2))) {}
+
+    std::pair<Point, Point> focuses() {
+        return {foc1, foc2};
+    }
+
+    double eccentricity() const {
+        return sqrt(a * a - b * b) / a;
+    }
+
+    Point center() const {
+        Point ans = foc1 + foc2;
+        ans /= 2;
+        return ans;
+    }
+
+    std::pair<Line, Line> directrices() {
+        double dist = a * a / distance;
+        Point cent = center();
+        Point CF1 = Point(cent, foc1), CF2 = Point(cent, foc2);
+        CF1 /= ::dist(CF1);
+        CF2 /= ::dist(CF2);
+        CF1 *= dist;
+        CF2 *= dist;
+        Point P1 = cent + CF1;
+        Point P2 = cent + CF2;
+        Point CF1t = {-CF1.y, CF1.x};
+        Point P3 = P1 + CF1t;
+        Point P4 = P2 + CF1t;
+        return {{P1, P3},
+                {P2, P4}};
+    }
+
+    double perimeter() const override {
+        return 4 * a * std::comp_ellint_2(eccentricity());
+    }
+
+    double area() const override {
+        return PI * a * b;
+    }
+
+    bool operator==(const Shape& other) const override;
+
+    bool operator!=(const Shape& other) const override {
+        return !(*this == other);
+    }
+
+    bool isCongruentTo(const Shape& other) const override {
+        Shape& oth = const_cast<Shape&>(other);
+        if (dynamic_cast<Ellipse*>(&oth) != nullptr) {
+            Ellipse* ellipse = dynamic_cast<Ellipse*>(&oth);
+            return a == ellipse->a and b == ellipse->b;
+        }
+        return false;
+    }
+
+    bool isSimilarTo(const Shape& other) const override {
+        Shape& oth = const_cast<Shape&>(other);
+        if (dynamic_cast<Ellipse*>(&oth) != nullptr) {
+            Ellipse* ellipse = dynamic_cast<Ellipse*>(&oth);
+            return a / ellipse->a == b / ellipse->b;
+        }
+        return false;
+    }
+
+    bool containsPoint(const Point& point) const override {
+        return dist(foc1, point) + dist(foc2, point) < distance;
+    }
+
+    void rotate(const Point& point, double ang) override {
+        foc1 = rotate_one_point(foc1, point, ang);
+        foc2 = rotate_one_point(foc2, point, ang);
+    }
+
+    void reflect(const Point& p) override {
+        foc1 = reflect_one_point(foc1, p);
+        foc2 = reflect_one_point(foc2, p);
+    }
+
+    void reflect(const Line& line) override {
+        foc1 = reflect_one_point(foc1, line);
+        foc2 = reflect_one_point(foc2, line);
+    }
+
+    void scale(const Point& P, double k) override {
+        Point PC = {P, foc1};
+        PC *= k;
+        foc1 = P + PC;
+
+        PC = {P, foc2};
+        PC *= k;
+        foc2 = P + PC;
+        distance *= k;
+    }
+};
+
+class Circle : public Ellipse {
+public:
+
+    ~Circle() = default;
+
+    Circle(Point center, double rad) : Ellipse(center, center, rad + rad) {}
+
+    double radius() {
+        return distance / 2;
+    }
+
+    double perimeter() const override {
+        return 2 * PI * distance / 2;
+    }
+
+    double area() const override {
+        return PI * distance * distance / 4;
+    }
+
+    bool operator==(const Shape& other) const override {
+        Shape& oth = const_cast<Shape&>(other);
+        if (dynamic_cast<Circle*>(&oth) != nullptr) {
+            Circle* circle = dynamic_cast<Circle*>(&oth);
+            return circle->distance == distance and center() == circle->center();
+        }
+        return Ellipse::operator==(other);
+    }
+
+    bool operator!=(const Shape& other) const override {
+        return !(*this == other);
+    }
+};
+
+class Rectangle : public Polygon {
+public:
+    ~Rectangle() = default;
+
+    std::vector<Point> init(Point A, Point B, double k) {
+        double distance = dist(A, B);
+        double x = sqrt(distance * distance / (1 + 1 / (k * k)));
+        Point AB = {A, B};
+        Point AD = ::rotate(AB, asin(x / k / distance));
+        AD *= x / distance;
+        Point D = A + AD;
+
+        Point BA = {B, A};
+        Point BC = ::rotate(BA, asin(x / k / distance));
+        BC *= x / distance;
+        Point C = B + BC;
+        return {A, C, B, D};
+    }
+
+    Rectangle(Point a, Point b, double k) : Polygon(init(a, b, k)) {}
+
+    Point center() {
+        Point ans = points[0] + points[2];
+        ans /= 2;
+        return ans;
+    }
+
+    std::pair<Line, Line> diagonals() {
+        return {{points[0], points[2]},
+                {points[1], points[3]}};
+    }
+
+
+    bool operator==(const Shape& other) const override;
+
+    bool operator!=(const Shape& other) const override {
+        return !(*this == other);
+    }
+};
+
+class Square : public Rectangle {
+public:
+    ~Square() = default;
+
+    Square(Point a, Point b) : Rectangle(a, b, 1) {}
+
+    Circle circumscribedCircle();
+
+    Circle inscribedCircle();
+
+    bool operator==(const Shape& other) const override;
+
+    bool operator!=(const Shape& other) const override {
+        return !(*this == other);
+    }
+};
+
+class Triangle : public Polygon {
+public:
+    ~Triangle() = default;
+
+    Triangle(Point a, Point b, Point c) : Polygon(a, b, c) {}
+
+    Circle circumscribedCircle() const {
+        Point A = points[0], B = points[1], C = points[2];
+        Point AB = {A, B};
+        AB /= 2;
+        Point half_AB = A + AB;
+        Point AB_t = {-AB.y, AB.x};
+        Point D = AB_t + half_AB;
+        Line line1 = Line(half_AB, D);
+
+        Point AC = {A, C};
+        AC /= 2;
+        Point half_AC = A + AC;
+        Point AC_t = {-AC.y, AC.x};
+        D = AC_t + half_AC;
+        Line l2 = Line(half_AC, D);
+        Point center = intersect_lines(line1, l2);
+        return {center, dist(center, A)};
+    }
+
+    Circle inscribedCircle() const {
+        Point A = points[0], B = points[1], C = points[2];
+        Point AB = {A, B}, AC = {A, C};
+        AB /= dist(AB, {0, 0});
+        AC /= dist(AC, {0, 0});
+        Point AD = {(AB.x + AC.x) / 2, (AB.y + AC.y) / 2};
+        Point D = A + AD;
+
+        Line line1(A, D);
+
+        Point BA = {B, A}, BC = {B, C};
+        BA /= dist(BA, {0, 0});
+        BC /= dist(BC, {0, 0});
+        Point bd = {(BA.x + BC.x) / 2, (BA.y + BC.y) / 2};
+        D = B + bd;
+
+        Line line2(B, D);
+        Point center = intersect_lines(line1, line2);
+        return {center, Line(A, B).dist(center)};
+    }
+
+    Point centroid() {
+        return {(points[0].x + points[1].x + points[2].x) / 3, (points[0].y + points[1].y + points[2].y) / 3};
+    }
+
+    Point orthocenter() {
+        Point O = circumscribedCircle().center();
+        Point A = points[0], B = points[1], C = points[2];
+        Point OA = {O, A}, OB = {O, B}, OC = {O, C};
+        Point OH = OA + OB + OC;
+        Point H = O + OH;
+        return H;
+    }
+
+    Line EulerLine() {
+        return Line(centroid(), orthocenter());
+    }
+
+    Circle ninePointsCircle() {
+        Point A = points[0], B = points[1], C = points[2];
+        Point AB = A + B, BC = B + C, AC = A + C;
+        AB /= 2;
+        BC /= 2;
+        AC /= 2;
+        Triangle tr = {AB, BC, AC};
+        return tr.circumscribedCircle();
+    }
+
+    bool operator==(const Shape& other) const override;
+
+    bool operator!=(const Shape& other) const override {
+        return !(*this == other);
+    }
+};
+
+bool Polygon::operator==(const Shape& other) const {
+    Shape& oth = const_cast<Shape&>(other);
+    if (dynamic_cast<Polygon*>(&oth) != nullptr) {
+        Polygon* polygon = dynamic_cast<Polygon*>(&oth);
+        for (auto c : points) {
+            bool fl = false;
+            for (auto c2 : polygon->points) {
+                if (c == c2) {
+                    fl = true;
+                    break;
+                }
+            }
+            if (!fl) {
+                return false;
+            }
+        }
+        return points.size() == polygon->points.size();
+    }
+    return false;
+}
+
+bool Rectangle::operator==(const Shape& other) const {
+    return Polygon::operator==(other);
+}
+
+bool Square::operator==(const Shape& other) const {
+    return Rectangle::operator==(other);
+}
+
+bool Triangle::operator==(const Shape& other) const {
+    return Polygon::operator==(other);
+}
+
+bool Ellipse::operator==(const Shape& other) const {
+    Shape& oth = const_cast<Shape&>(other);
+    if (dynamic_cast<Ellipse*>(&oth) != nullptr) {
+        Ellipse* ellipse = dynamic_cast<Ellipse*>(&oth);
+        return ellipse->distance == distance and Polygon(foc1, foc2) == Polygon(ellipse->foc1, ellipse->foc2);
+    }
+    return false;
+}
+
+Circle Square::circumscribedCircle() {
+    return Triangle(points[0], points[1], points[2]).circumscribedCircle();
+}
+
+Circle Square::inscribedCircle() {
+    Point AB = points[0] + points[1], BC = points[1] + points[2], AC = points[2] + points[3];
+    AB /= 2;
+    BC /= 2;
+    AC /= 2;
+    return Triangle(AB, BC, AC).circumscribedCircle();
+}
